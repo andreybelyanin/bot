@@ -1,29 +1,32 @@
-import wiringpi
+import subprocess
 import time
-from wiringpi import GPIO
-
-pin_num_in = 24    # onboard_pin_num 35
-pin_num_out = 25    # onboard_pin_num 37
-wiringpi.wiringPiSetup()
+from clients_db import WorkWithClientDB
 
 
 def turning_on(sec):
-    wiringpi.pinMode(pin_num_out, GPIO.OUTPUT)
-    wiringpi.digitalWrite(pin_num_out, GPIO.HIGH)
+    subprocess.call('gpio mode 25 out', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    subprocess.call('gpio write 25 1', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(sec)
-    wiringpi.digitalWrite(pin_num_out, GPIO.LOW)
-    time.sleep(2)
-    status = check_status()
-    return status
+    subprocess.call('gpio write 25 0', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def check_status():
-    wiringpi.pinMode(pin_num_in, GPIO.INPUT)
-    if wiringpi.digitalRead(pin_num_in):
-        return 'Сервер включен'
+    subprocess.call('gpio mode 23 in', shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if int(str(subprocess.run('gpio read 23', shell=True, stdout=subprocess.PIPE).stdout).strip("b'\\n")) == 1:
+        WorkWithClientDB.update_server_status(1)
     else:
-        return 'Сервер выключен'
+        WorkWithClientDB.update_server_status(0)
 
 
 if __name__ == '__main__':
-    turning_on(0.5)
+    while True:
+        check_status()
+        com_num = WorkWithClientDB.check_comand()
+        if com_num == 1:
+            turning_on(0.5)
+            WorkWithClientDB.gpio_controlling(0)
+        elif com_num == 2:
+            turning_on(6)
+            WorkWithClientDB.gpio_controlling(0)
+        else:
+            time.sleep(0.5)
