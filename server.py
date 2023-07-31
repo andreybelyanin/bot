@@ -42,7 +42,6 @@ class ClAddForm(StatesGroup):
 # class AddNote(StatesGroup):
 
 
-
 def auth(func):
     """ Разрешения на пользование ботом """
     async def wrapper(message):
@@ -68,12 +67,11 @@ async def return_to_start_menu(message):
 async def send_welcome(message: types.Message):
     """ Инлайн кнопки главного меню """
     keyboard = types.InlineKeyboardMarkup()
-    if message['from']['id'] != my_id:
-        server_button = types.InlineKeyboardButton(text="Меню работы с сервером", callback_data="server")
-        keyboard.add(server_button)
+    server_button = types.InlineKeyboardButton(text="Меню работы с сервером", callback_data="server")
     button_weather = types.InlineKeyboardButton(text="Погода", callback_data="weather")
     button_bd = types.InlineKeyboardButton(text="Клиенты", callback_data="clients")
     button_notes = types.InlineKeyboardButton(text="Заметки", callback_data="notes")
+    keyboard.add(server_button)
     keyboard.add(button_weather, button_bd, button_notes)
     await message.answer("Выберите из списка ниже, чтобы Вы хотели сделать:", reply_markup=keyboard)
 
