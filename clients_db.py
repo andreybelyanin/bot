@@ -1,8 +1,14 @@
+import time
 from datetime import datetime
 import sqlite3
 
+from sqlalchemy import func, select, update, delete, and_
+
+from DBmodel import Session, Clients, Appointment, Notes, GPIO
+
 conn = sqlite3.connect("clients.db", detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
 cursor = conn.cursor()
+session = Session()
 
 
 class WorkWithClientDB:
@@ -10,8 +16,8 @@ class WorkWithClientDB:
     @staticmethod
     def show_clients_list():
         try:
-            cursor.execute("""SELECT id, name, description FROM clients ORDER BY name;""")
-            clients_list = cursor.fetchall()
+            query = select(Clients.id, Clients.name, Clients.description).order_by(Clients.name)
+            clients_list = session.execute(query).all()
             return clients_list
         except Exception as e:
             err_msg = f"Произошла ошибка в {datetime.now()} при формировании списка клиентов: {e}\n "
@@ -20,8 +26,8 @@ class WorkWithClientDB:
     @staticmethod
     def show_client_info(cl_id: int):
         try:
-            cursor.execute("""SELECT id, name, description FROM clients WHERE id = ?""", (cl_id,))
-            client_info = cursor.fetchone()
+            query = select(Clients.id, Clients.name, Clients.description).where(Clients.id == cl_id)
+            client_info = session.execute(query).one()
             return client_info
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
@@ -29,59 +35,65 @@ class WorkWithClientDB:
 
     @staticmethod
     def client_create(name: str, description: str):
-        cursor.execute("SELECT max(id) FROM clients;")
-        max_clients_id = cursor.fetchone()
-        if max_clients_id[0] is None:
+        query = select(func.max(Clients.id))
+        max_clients_id = session.execute(query).scalar()
+        if max_clients_id is None:
             cl_id = 1
         else:
-            cl_id = max_clients_id[0] + 1
-        cl_entity = (cl_id, name, description)
+            cl_id = max_clients_id + 1
         try:
-            cursor.execute("""INSERT or IGNORE INTO clients(id, name, description)
-                                values(?, ?, ?)""", cl_entity)
-            conn.commit()
+            new_client = Clients(id=cl_id, name=name, description=description)
+            session.add(new_client)
+            session.commit()
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при добавлении клиента: {e}\n")
 
     @staticmethod
     def change_client_info(field: str, value: str, cl_id: int):
+        query = None
         try:
-            cursor.execute(f"UPDATE clients SET {field} = ? WHERE id = ?", (value, cl_id))
-            conn.commit()
+            if field == 'name':
+                query = update(Clients).where(Clients.id == cl_id).values(name=value)
+            elif field == 'description':
+                query = update(Clients).where(Clients.id == cl_id).values(description=value)
+            session.execute(query)
+            session.commit()
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
                                                f"изменении данных клиента: {e}\n")
 
     @staticmethod
     def make_appointment(cl_id: int, appmnt_date: str, appmnt_description: str):
-        cursor.execute("SELECT max(id) FROM appointment")
-        max_ap_id = cursor.fetchone()
-        if not max_ap_id[0]:
+        query = select(func.max(Appointment.id))
+        max_ap_id = session.execute(query).scalar()
+        if not max_ap_id:
             ap_id = 1
         else:
-            ap_id = max_ap_id[0] + 1
-        ap_entity = (ap_id, appmnt_date, appmnt_description, cl_id)
+            ap_id = max_ap_id + 1
         try:
-            cursor.execute(f"""INSERT or IGNORE INTO appointment (id, appointment_date, description, client_id)
-                                values (?, ?, ?, ?)""", ap_entity)
-            conn.commit()
+            new_app = Appointment(id=ap_id, appointment_date=appmnt_date, description=appmnt_description,
+                                  client_id=cl_id)
+            session.add(new_app)
+            session.commit()
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при записи клиента: {e}\n")
 
     @staticmethod
     def cancel_appointment(cl_id: int):
         try:
-            cursor.execute(f"DELETE FROM appointment WHERE client_id = ?", (cl_id,))
-            conn.commit()
+            query = delete(Appointment).where(Appointment.client_id == cl_id)
+            session.execute(query)
+            session.commit()
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла в {datetime.now()} ошибка при удалении записи: {e}\n")
 
     @staticmethod
     def add_profit(profit: int, cl_id: int, app_date: str):
         try:
-            cursor.execute(f"""UPDATE appointment SET price = ?
-                           WHERE client_id = ? AND appointment_date = ?""", (profit, cl_id, app_date))
-            conn.commit()
+            query = update(Appointment).values(price=profit).where(and_(Appointment.client_id == cl_id,
+                                                                        Appointment.appointment_date == app_date))
+            session.execute(query)
+            session.commit()
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
                                                f"добавлении суммы оплаты: {e}\n")
@@ -89,9 +101,9 @@ class WorkWithClientDB:
     @staticmethod
     def show_appointment_info_by_date(date: str):
         try:
-            cursor.execute("""SELECT ap.appointment_date, ap.description, cl.name, ap.price FROM appointment ap
-            JOIN clients cl ON ap.client_id = cl.id WHERE ap.appointment_date LIKE ?""", (date,))
-            clients_list = cursor.fetchall()
+            query = select(Appointment.appointment_date, Appointment.description, Clients.name, Appointment.price).join(
+                Clients).where(Appointment.appointment_date.like(date))
+            clients_list = session.execute(query).all()
             return clients_list
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при получении информации о "
@@ -100,9 +112,9 @@ class WorkWithClientDB:
     @staticmethod
     def show_appointment_info_by_cl_id(cl_id: int):
         try:
-            cursor.execute(f"""SELECT name, appointment_date, ap.description, price FROM appointment ap
-                                JOIN clients cl ON ap.client_id = cl.id WHERE ap.client_id = ?""", (cl_id,))
-            clients_list = cursor.fetchall()
+            query = select(Clients.name, Appointment.appointment_date, Appointment.description, Appointment.price).join(
+                Clients).where(Appointment.client_id == cl_id)
+            clients_list = session.execute(query).all()
             return clients_list
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
@@ -112,16 +124,17 @@ class WorkWithClientDB:
     def del_client(cl_id):
         result = []
         try:
-            cursor.execute(f"""SELECT name FROM clients WHERE id = ?""", (cl_id,))
-            clients_del_list = cursor.fetchall()
+            query = select(Clients.name).where(Clients.id == cl_id)
+            clients_del_list = session.execute(query).all()
             for row in clients_del_list:
                 result.append(row)
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} "
                                                f"при поиске данного клиента({cl_id}): {e}\n")
         try:
-            cursor.execute("DELETE FROM clients WHERE id = ?", (cl_id,))
-            conn.commit()
+            query = delete(Clients).where(Clients.id == cl_id)
+            session.execute(query)
+            session.commit()
             return f"Удалён клиент: {result}"
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка при удалении данного клиента({cl_id}): {e}\n")
@@ -129,8 +142,8 @@ class WorkWithClientDB:
     @staticmethod
     def get_statistics():
         try:
-            cursor.execute(f"""select client_id, price, appointment_date from appointment""")
-            month_stat_list = cursor.fetchall()
+            query = select(Appointment.client_id, Appointment.price, Appointment.appointment_date)
+            month_stat_list = session.execute(query).all()
 
             start_date = datetime.now()
             start_year = datetime(year=start_date.year, month=1, day=1)
@@ -168,8 +181,8 @@ class WorkWithClientDB:
     def get_notes(date):
         date_spl_time = date.split(" ")[0]
         try:
-            cursor.execute(f"""SELECT note FROM notes WHERE note_date LIKE ?""", (date_spl_time,))
-            notes_list = cursor.fetchall()
+            query = select(Notes.note).where(Notes.note_date.like(date_spl_time))
+            notes_list = session.execute(query).all()
             return notes_list
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
@@ -178,8 +191,8 @@ class WorkWithClientDB:
     @staticmethod
     def get_note_now(date):
         try:
-            cursor.execute(f"""SELECT note FROM notes WHERE substring(note_date, 1, 16) = ?""", (date,))
-            note = cursor.fetchone()
+            query = select(Notes.note).where((func.substr(Notes.note_date, 1, 16)) == date)
+            note = session.execute(query).one()
             return note
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
@@ -188,9 +201,9 @@ class WorkWithClientDB:
     @staticmethod
     def add_note(note_date: str, note: str):
         try:
-            cursor.execute(f"""INSERT or IGNORE INTO notes (note_date, note)
-                                values (?, ?)""", (note_date, note))
-            conn.commit()
+            new_note = Notes(note_date=note_date, note=note)
+            session.add(new_note)
+            session.commit()
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при добавлении заметки: {e}\n")
 
@@ -198,9 +211,9 @@ class WorkWithClientDB:
     def del_note(note_date: str, note: str):
         date_spl_time = note_date.split(" ")[0]
         try:
-            cursor.execute(f"""DELETE FROM notes WHERE substring(note_date, 1, 10) = ? AND note = ?""", (date_spl_time,
-                                                                                                         note))
-            conn.commit()
+            query = delete(Notes).where(and_(func.substr(Notes.note_date, 1, 10) == date_spl_time, Notes.note == note))
+            session.execute(query)
+            session.commit()
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при добавлении заметки: {e}\n")
 
@@ -208,16 +221,16 @@ class WorkWithClientDB:
     def get_notes_for_month(date_tuple):
         if isinstance(date_tuple, tuple):
             try:
-                cursor.execute(f"""SELECT note FROM notes WHERE substring(note_date, 1, 10) IN {date_tuple}""")
-                notes_list = cursor.fetchall()
+                query = select(Notes.note).where((func.substr(Notes.note_date, 1, 10)).in_(date_tuple))
+                notes_list = session.execute(query).all()
                 return notes_list
             except Exception as e:
                 WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
                                                    f"получении информации о заметках на месяц: {e}\n")
         elif isinstance(date_tuple, str):
             try:
-                cursor.execute(f"""SELECT note FROM notes WHERE substring(note_date, 1, 10) IN (?)""", (date_tuple,))
-                notes_list = cursor.fetchall()
+                query = select(Notes.note).where((func.substr(Notes.note_date, 1, 10) == date_tuple))
+                notes_list = session.execute(query).all()
                 return notes_list
             except Exception as e:
                 WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
@@ -231,46 +244,100 @@ class WorkWithClientDB:
     @staticmethod
     def db_cleaner(date_tuple):
         try:
-            cursor.execute(f"""DELETE FROM notes WHERE note_date IN {date_tuple}""")
-            conn.commit()
+            query = delete(Notes).where(Notes.note_date.in_(date_tuple))
+            session.execute(query)
+            session.commit()
         except Exception as e:
-            WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при чистке БД от старых заметок: {e}\n")
+            WorkWithClientDB.writing_error_log(
+                f"Произошла ошибка в {datetime.now()} при чистке БД от старых заметок: {e}\n")
 
     @staticmethod
     def db_appointment_cleaner(date_tuple):
         try:
-            cursor.execute(f"""DELETE FROM appointment WHERE SUBSTRING(appointment_date,1,10) IN {date_tuple}""")
-            conn.commit()
+            query = delete(Appointment).where((func.substr(Appointment.appointment_date, 1, 10)).in_(date_tuple))
+            session.execute(query)
+            session.commit()
         except Exception as e:
-            WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при чистке БД от старых записей: {e}\n")
+            WorkWithClientDB.writing_error_log(
+                f"Произошла ошибка в {datetime.now()} при чистке БД от старых записей: {e}\n")
 
     @staticmethod
     def check_appointment(date_tuple):
         try:
-            cursor.execute(f"""SELECT appointment_date from appointment WHERE SUBSTRING(appointment_date,1,10) IN {date_tuple}""")
-            notes_list = cursor.fetchall()
-            return notes_list
+            query = select(Appointment.appointment_date).where((func.substr(Appointment.appointment_date, 1, 10)).in_(
+                date_tuple
+            ))
+            app_dt_list = session.execute(query).all()
+            return app_dt_list
         except Exception as e:
             WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при запросе к appointment: {e}\n")
 
+    @staticmethod
+    def gpio_controlling(comand_num: int):
+        try:
+            query = update(GPIO).values(comand=comand_num).where(GPIO.id == 1)
+            session.execute(query)
+            session.commit()
+            if comand_num == 1:
+                time.sleep(3)
+            elif comand_num == 2:
+                time.sleep(7)
+        except Exception as e:
+            WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
+                                               f"запуске команды {comand_num} для работы с GPIO: {e}\n")
 
-def _init_db():
-    """Инициализирует БД"""
-    with open("create_db.sql", "r") as f:
-        sql = f.read()
-    cursor.executescript(sql)
-    conn.commit()
+    @staticmethod
+    def check_comand():
+        try:
+            query = select(GPIO.comand).where(GPIO.id == 1)
+            comand = session.execute(query).scalar()
+            return int(comand)
+        except Exception as e:
+            WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
+                                               f"проверке номера команды: {e}\n")
+
+    @staticmethod
+    def check_status():
+        try:
+            query = select(GPIO.status).where(GPIO.id == 1)
+            status = session.execute(query).scalar()
+            if int(status) == 1:
+                return 'Сервер включен'
+            else:
+                return 'Сервер выключен'
+        except Exception as e:
+            WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
+                                               f"проверке статуса сервера: {e}\n")
+
+    @staticmethod
+    def update_server_status(stat_name: int):
+        try:
+            query = update(GPIO).values(status=stat_name).where(GPIO.id == 1)
+            session.execute(query)
+            session.commit()
+        except Exception as e:
+            WorkWithClientDB.writing_error_log(f"Произошла ошибка в {datetime.now()} при "
+                                               f"смене статуса сервера: {e}\n")
 
 
-def check_db_exists():
-    """Проверяет, инициализирована ли БД, если нет — инициализирует"""
-    cursor.execute("SELECT name FROM sqlite_master "
-                   "WHERE type='table' AND name='clients'")
-    table_exists = cursor.fetchall()
-    if table_exists:
-        return
-    _init_db()
+# def _init_db():
+#     """Инициализирует БД"""
+#     with open("create_db.sql", "r") as f:
+#         sql = f.read()
+#     cursor.executescript(sql)
+#     conn.commit()
+#
+#
+# def check_db_exists():
+#     """Проверяет, инициализирована ли БД, если нет — инициализирует"""
+#     cursor.execute("SELECT name FROM sqlite_master "
+#                    "WHERE type='table' AND name='clients'")
+#     table_exists = cursor.fetchall()
+#     if table_exists:
+#         return
+#     _init_db()
 
 
 if __name__ == "__main__":
-    check_db_exists()
+    # check_db_exists()
+    print(WorkWithClientDB.check_appointment(('21-07-2023',)))
